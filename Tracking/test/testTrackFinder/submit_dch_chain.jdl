@@ -1,0 +1,46 @@
+# submit_dch_chain.jdl
+universe        = vanilla
+executable      = run_dch_chain.sh
+arguments       = $(job) $(events) $(skip) $(seed) $(out_eos) $(model) $(compact) $(bundle)
+
+# Files staged from submit host
+transfer_input_files = SteeringFile_IDEA_o1_v03DCH.py,runDCHTestTrackFinder.py,k4rt_runtime.tar.gz
+transfer_output_files = k4run.log, ddsim.log, progress.log
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+
+# Live log streaming
+stream_output   = True
+stream_error    = True
+
+# Logs
+output          = /afs/cern.ch/user/c/cglenn/FCCWork/logs/job_$(job).out
+error           = /afs/cern.ch/user/c/cglenn/FCCWork/logs/job_$(job).err
+log             = /afs/cern.ch/user/c/cglenn/FCCWork/logs/condor.log
+
+# Resources (adjust as needed)
+request_cpus    = 4
+request_memory  = 12 GB
+request_disk    = 2 GB
++JobFlavour     = "workday"
+
+# Runtime knobs consumed by run_dch_chain.sh / runDCHTestTrackFinder.py
+# - GGTF_LOG: INFO|DEBUG
+# - PRODUCE_3DHITS: 0|1
+# - MAX_HITS: 0 means no cap; >0 enables --maxHitsPerEvent
+# - FITTER: none|genfit2  (genfit2 auto-enables 3D hits)
+# - FIT_OUT: name of output collection from fitter
+# - TIMEOUT_DDSIM / TIMEOUT_K4RUN: seconds (0 = no timeout)
+# - (optional) MAX_VMEM_MB: soft cap via ulimit -v; omit unless you really want it
+# Runtime knobs
+environment = "GGTF_LOG=INFO PRODUCE_3DHITS=0 MAX_HITS=1000 FITTER=none FIT_OUT=GenFitTracks TIMEOUT_DDSIM=0 TIMEOUT_K4RUN=7200"
+
+# ---- EDIT THESE TO YOUR PATHS ----
+out_eos   = /eos/user/c/cglenn/k4rt_dch/testA
+model     = /afs/cern.ch/user/c/cglenn/FCCWork/k4RecTracker/Tracking/test/inputFiles/SimpleGatrIDEAv3o1.onnx.md5
+compact   = /eos/user/c/cglenn/FCCWork/GithubRepos/k4geoMax/FCCee/IDEA/compact/IDEA_o1_v03/IDEA_o1_v03CF_2umAu.xml
+bundle    = /afs/cern.ch/user/c/cglenn/FCCWork/k4RecTracker/Tracking/test/testTrackFinder/k4rt_runtime.tar.gz
+# ----------------------------------
+
+queue job,events,skip,seed from joblist.txt
