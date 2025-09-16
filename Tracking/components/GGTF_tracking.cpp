@@ -12,6 +12,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <type_traits>  // for label stamping trait checks
 
 // ONNX & Torch
 #include <ATen/ATen.h>
@@ -70,6 +71,25 @@ struct StepTimer {
     return std::chrono::duration_cast<std::chrono::milliseconds>(dt).count();
   }
 };
+
+// ---- label stamping helpers for 3D hits (schema-safe) ----
+template <typename, typename = void> struct has_setQuality : std::false_type {};
+template <typename T>
+struct has_setQuality<T, std::void_t<decltype(std::declval<T&>().setQuality(int{}))>> : std::true_type {};
+
+template <typename, typename = void> struct has_setType : std::false_type {};
+template <typename T>
+struct has_setType<T, std::void_t<decltype(std::declval<T&>().setType(int{}))>> : std::true_type {};
+
+template <typename Hit3D>
+inline void set_label_on_3d(Hit3D& h, int label) {
+  if constexpr (has_setQuality<Hit3D>::value) {
+    h.setQuality(label);
+  } else if constexpr (has_setType<Hit3D>::value) {
+    h.setType(label);
+  } // else: schema lacks both; do nothing
+}
+
 } // namespace
 
 struct GGTF_tracking final
@@ -332,15 +352,16 @@ struct GGTF_tracking final
     logMem("after-bucket");
 
     // ------- helpers to emit 3D hits (used only if produce3DHits) -------
-    auto make3D_from_planar = [&](const edm4hep::TrackerHitPlane& hp) {
+    auto make3D_from_planar = [&](const edm4hep::TrackerHitPlane& hp, int label) {
       auto h = out3D.create();
       const auto p = hp.getPosition();
       h.position()  = edm4hep::Vector3d{p.x, p.y, p.z};
       h.covMatrix() = small_cov_3d();
       h.time()      = 0.f;
+      set_label_on_3d(h, label); // stamp GGTF label
       return h;
     };
-    auto make3D_from_wire = [&](const extension::SenseWireHit& hw) {
+    auto make3D_from_wire = [&](const extension::SenseWireHit& hw, int label) {
       const auto wp = hw.getPosition();
       const double d   = hw.getDistanceToWire();
       const double phi = hw.getWireAzimuthalAngle();
@@ -361,22 +382,23 @@ struct GGTF_tracking final
       h.position()  = edm4hep::Vector3d{M.X(), M.Y(), M.Z()};
       h.covMatrix() = small_cov_3d();
       h.time()      = 0.f;
+      set_label_on_3d(h, label); // stamp GGTF label
       return h;
     };
 
     // quick helper to attach relation & optionally create 3D
-    auto add_hit_to_track = [&](extension::MutableTrack& trk, int64_t flatIdx) {
+    auto add_hit_to_track = [&](extension::MutableTrack& trk, int64_t flatIdx, int label) {
       const int64_t t  = tagType[flatIdx];
       const int64_t ia = tagIndexA[flatIdx];
       const int64_t ib = tagIndexB[flatIdx];
 
       if (t == 0) {
         const auto& hp = (*inputPlanar[ia])[int(ib)];
-        if (produce3DHits.value()) { (void)make3D_from_planar(hp); }
+        if (produce3DHits.value()) { (void)make3D_from_planar(hp, label); }
         trk.addToTrackerHits(hp);
       } else {
         const auto& hw = (*inputWire[ia])[int(ib)];
-        if (produce3DHits.value()) { (void)make3D_from_wire(hw); }
+        if (produce3DHits.value()) { (void)make3D_from_wire(hw, label); }
         trk.addToTrackerHits(hw);
       }
     };
@@ -395,7 +417,7 @@ struct GGTF_tracking final
         const int labelValue = uniques_cpu[li].item<int>(); // use CPU tensor (avoid device sync)
         trk.setType(labelValue);
 
-        for (int64_t k : groups[li]) add_hit_to_track(trk, k);
+        for (int64_t k : groups[li]) add_hit_to_track(trk, k, labelValue); // pass label to 3D maker
         ++nTracks;
       }
       info() << "[evt " << m_evt << "] build: tracks=" << nTracks
